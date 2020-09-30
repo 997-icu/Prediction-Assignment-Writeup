@@ -1,0 +1,163 @@
+---
+title: "Prediction Assignment Writeup"
+author: "ZTH"
+date: "2020/9/30"
+output:
+  pdf_document: default
+  md_document: default
+  html_document: default
+---
+# Preprocess
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r globaloptions,include=FALSE}
+knitr::opts_chunk$set(fig.path = "figures/")
+```
+
+## Load packages and our datasets
+```{r,warning=FALSE,results='hide',message=FALSE}
+#Load the packages we need
+library(tidyverse)   #Including ggplot2 and dplyr 
+library(ggpubr)      
+library(caret)   #Machine Learning Package
+library(e1071)
+library(ranger)
+library(ordinalForest)
+library(randomForest)
+library(gbm)
+library(plyr)
+library(MASS)
+
+#Use parallel to boost
+library(parallel)
+library(doParallel)
+library(foreach)
+library(iterators)
+```
+```{r}
+#The working directory has already been set
+#Load the data
+train <- read.csv("pml-training.csv")
+test <- read.csv("pml-testing.csv")
+```
+
+## Brief overview of our dataset
+```{r}
+#See the dimention of our train set
+print(dim(train))
+#See the dimention of our test set
+print(dim(test))
+
+#A brief overview of class(outcome)
+print(unique(train$classe))
+```
+
+## Select features we need
+*If we view the train set, we'll find that only samples with the column "new_window" equaling to "yes" have no missing values in all columns*
+
+```{r}
+print(nrow(train[train$new_window == "yes",]))
+print(sum(is.na(train[train$new_window == "yes",])))
+```
+
+*But in test set, all samples have "no" value in column "new_window",so I decide to delete those samples with the column "new_window" equaling to "yes" so as to avoid large amount of NA values.*
+
+```{r}
+#Delete those NA columns and blank columns as well
+new_train <- train %>% filter(new_window == "no") 
+#Delete NA columns
+new_train <- new_train[,-which(apply(new_train,2,function(x) all(is.na(x))))]
+#Delete blank columns
+new_train <- new_train[,-which(apply(new_train,2,function(x) all(x=="")))]
+
+#Delete the features which are of no relation with measurement,such as user_name,new_window
+new_train <- new_train[,7:ncol(new_train)]
+
+```
+
+*We want to do the same to test set, but the original train set has the label column "classe", and we see that there are 160 variables both in train set and test set, so there must be 1 column different between them.(Because test set doesn't have column "classe")*
+```{r}
+#sum of the intersection of column names between original train set and test set
+print(length(intersect(colnames(train),colnames(test))))   #159
+
+#find the difference between them
+print(setdiff(colnames(train),colnames(test)))  #classe in train set
+print(setdiff(colnames(test),colnames(train)))  #problem_id in test set
+```
+*So we find it! We can just delete column problem_id in test set and do the same as what we do to the train set to get the new test set*
+```{r}
+#Select intersection 
+new_test <- test %>% dplyr::select(intersect(colnames(train),colnames(test)))
+
+#Delete NA columns
+new_test <- new_test[,-which(apply(new_test,2,function(x) all(is.na(x))))]
+
+#Delete the features which are of no relation with measurement,such as user_name,new_window
+new_test <- new_test[,7:ncol(new_test)]
+
+```
+
+*We can see the new dimention and if there are still some NAs in the new train set and new test set, and check the dimention and column names*
+```{r}
+#See the new dim of new_train
+print(dim(new_train))   #54 includes label column "classe"
+
+#See if there are still some NAs
+print(sum(is.na(new_train)))
+
+#See the new dim fo new_test
+print(dim(new_test))   #53 doesn't include "classe"
+
+#See if there are NAs in new_test
+print(sum(is.na(new_test)))
+
+#Intersect again to check
+print(length(intersect(colnames(new_train),colnames(new_test))))
+```
+*Now we have our tidy train set and test set!*
+
+# Model building
+*In this part we'll build our machine learning model.I choose* **Linear Discriminant Analysis** *for this classification problem.Here I repeat* **5-fold cross validation for 2 times** *in the new train set,and use parallel method to boost the preocess.*
+
+```{r}
+set.seed(123456)
+#Here we use parallel method to accelerate the training process
+cluster <- makeCluster(detectCores()-1)  # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+#Set the train control,random search the hyperparameters
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 5,
+                           repeats = 2,
+                           allowParallel = TRUE
+                           )
+#Fit the model
+lda_fit <- train(classe~.,data = new_train,method = "lda",trControl = fitControl)
+
+#shut down the cluster
+stopCluster(cluster)
+registerDoSEQ()
+lda_fit
+```
+
+*We get a just-so-so accuracy of 71.25%. But it is enough for this course project. We want to show the process of building our machine learning model rather than a high accuracy.Here is the* **error report** *of our train set.*
+```{r}
+
+predictionsTraining <- predict(lda_fit, newdata=new_train)
+confusionMatrix(predictionsTraining, new_train$classe)
+
+
+```
+*Here we have the final prediction of our 20 examples in test set*
+```{r}
+predict(lda_fit,new_test)
+
+```
+
+
+
+
+
+
